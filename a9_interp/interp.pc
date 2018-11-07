@@ -1,0 +1,197 @@
+(define-registers exp* vocenv* aeenv* ack* aek* akk* vock* v* addr* clos* x*)
+(define-program-counter pc)
+
+(define-union expr
+  (const cexp)
+  (var n)
+  (if test conseq alt)
+  (mult nexp1 nexp2)
+  (sub1 nexp)
+  (zero nexp)
+  (letcc body)
+  (throw kexp vexp)
+  (let exp body)              
+  (lambda body)
+  (app rator rand))
+
+(define-union cont
+  (mult-inner-k r1^ k^)
+  (mult-outer-k x2^ env^ k^)
+  (sub-k k^)
+  (zero-k k^)
+  (if-k conseq^ alt^ env^ k^)
+  (throw-k v-exp^ env^)
+  (let-k body^ env^ k^)
+  (app-inner-k rator^ k^)
+  (app-outer-k rand^ env^ k^)
+  (empty-k jumpout))
+
+(define-label apply-k
+	(union-case akk* cont
+		((mult-inner-k r1^ k^) 
+		(begin 
+			(set! akk* k^) 
+			(set! v* (* r1^ v*)) 
+			(set! pc apply-k)))
+		((mult-outer-k x2^ env^ k^) 
+		(begin 
+			(set! exp* x2^) 
+			(set! vocenv* env^) 
+			(set! vock* (cont_mult-inner-k v* k^)) 
+			(set! pc value-of-cps)))
+		((sub-k k^) 
+		(begin 
+			(set! akk* k^) 
+			(set! v* (sub1 v*)) 
+			(set! pc apply-k)))
+		((zero-k k^) 
+		(begin 
+			(set! akk* k^) 
+			(set! v* (zero? v*)) 
+			(set! pc apply-k)))
+		((if-k conseq^ alt^ env^ k^) 
+		(if v* (begin 
+			(set! exp* conseq^) 
+			(set! vocenv* env^) 
+			(set! vock* k^) 
+			(set! pc value-of-cps))
+		(begin 
+			(set! exp* alt^) 
+			(set! vocenv* env^) 
+			(set! vock* k^) 
+			(set! pc value-of-cps))))
+		((throw-k v-exp^ env^) 
+		(begin 
+			(set! exp* v-exp^) 
+			(set! vocenv* env^) 
+			(set! vock* v*) 
+			(set! pc value-of-cps)))
+		((let-k body^ env^ k^) 
+		(begin 
+			(set! exp* body^) 
+			(set! vocenv* (env__newenv env^ v*)) 
+			(set! vock* k^) 
+			(set! pc value-of-cps)))
+		((app-inner-k rator^ k^) 
+		(begin 
+			(set! clos* rator^) 
+			(set! x* v*) 
+			(set! ack* k^) 
+			(set! pc apply-closure)))
+		((app-outer-k rand^ env^ k^) 
+		(begin 
+			(set! exp* rand^) 
+			(set! vocenv* env^) 
+			(set! vock* (cont_app-inner-k v* k^)) 
+			(set! pc value-of-cps)))
+		((empty-k jumpout) 
+			(dismount-trampoline jumpout))))
+	
+(define-label value-of-cps
+    (union-case exp* expr
+      [(const exp) 
+	  (begin 
+		  (set! akk* vock*) 
+		  (set! v* exp) 
+		  (set! pc apply-k))]
+      [(mult x1 x2) 
+	  (begin 
+		  (set! exp* x1) 
+		  (set! vock* (cont_mult-outer-k x2 vocenv* vock*)) 
+		  (set! pc value-of-cps))]
+      [(sub1 x) 
+	  (begin 
+		  (set! exp* x) 
+		  (set! vock* (cont_sub-k vock*)) 
+		  (set! pc value-of-cps))]
+      [(zero x) 
+	  (begin 
+		  (set! exp* x) 
+		  (set! vock* (cont_zero-k vock*)) 
+		  (set! pc value-of-cps))]
+      [(if test conseq alt) 
+	  (begin 
+		  (set! exp* test) 
+		  (set! vock* (cont_if-k conseq alt vocenv* vock*)) 
+		  (set! pc value-of-cps))]
+      [(letcc body) 
+	  (begin 
+		  (set! exp* body) 
+		  (set! vocenv* (env__newenv vocenv* vock*)) 
+		  (set! pc value-of-cps))]
+      [(throw k-exp v-exp) 
+	  (begin 
+		  (set! exp* k-exp) 
+		  (set! vock* (cont_throw-k v-exp vocenv*)) 
+		  (set! pc value-of-cps))]
+      [(let e body) 
+	  (begin 
+		  (set! exp* e) 
+		  (set! vock* (cont_let-k body vocenv* vock*)) 
+		  (set! pc value-of-cps))]
+      [(var exp) 
+	  (begin 
+		  (set! aeenv* vocenv*) 
+		  (set! addr* exp) 
+		  (set! aek* vock*) 
+		  (set! pc apply-env))]
+      [(lambda body) 
+	  (begin 
+		  (set! akk* vock*) 
+		  (set! v* (closure_clos body vocenv*)) 
+		  (set! pc apply-k))]
+      [(app rator rand) 
+	  (begin 
+		  (set! exp* rator) 
+		  (set! vock* (cont_app-outer-k rand vocenv* vock*)) 
+		  (set! pc value-of-cps))]))
+
+(define-union env_
+  (empty-env)
+  (newenv env^ obj^))
+	
+(define-label apply-env
+	(union-case aeenv* env_ 
+		((empty-env) (error 'value-of-cps "unbound identifier")) 
+		((newenv env^ obj^) 
+		(if (zero? addr*) (begin 
+			(set! akk* aek*) 
+			(set! v* obj^) 
+			(set! pc apply-k))
+        (begin 
+			(set! aeenv* env^) 
+			(set! addr* (sub1 addr*)) 
+			(set! pc apply-env))))))
+	  
+(define-union closure
+  (clos body env))
+
+(define-label apply-closure
+	(union-case clos* closure
+		((clos body env) 
+		(begin 
+			(set! exp* body) 
+			(set! vocenv* (env__newenv env x*)) 
+			(set! vock* ack*) 
+			(set! pc value-of-cps)))))
+	
+(define-label main 
+    (begin
+    (set! exp*
+     (expr_let 
+      (expr_lambda
+       (expr_lambda 
+        (expr_if
+         (expr_zero (expr_var 0))
+         (expr_const 1)
+         (expr_mult (expr_var 0) (expr_app (expr_app (expr_var 1) (expr_var 1)) (expr_sub1 (expr_var 0)))))))
+      (expr_mult
+       (expr_letcc
+        (expr_app
+         (expr_app (expr_var 1) (expr_var 1))
+         (expr_throw (expr_var 0) (expr_app (expr_app (expr_var 1) (expr_var 1)) (expr_const 4)))))
+       (expr_const 5))))
+    (set! vocenv* (env__empty-env))
+    (set! pc value-of-cps)
+    (mount-trampoline cont_empty-k vock* pc)
+  (printf "~s\n" v*)))
