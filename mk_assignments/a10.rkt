@@ -1,7 +1,6 @@
 #lang racket
 (require "mk.rkt")
 (require "numbers.rkt")
-;;↑It's an ALU! Amazing!↑
 
 
 ;; Part I Write the answers to the following problems using your
